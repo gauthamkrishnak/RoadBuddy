@@ -1,13 +1,14 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User, UserRole } from '../types';
 import { INITIAL_USER } from '../mockData';
+import { authApi } from '../services/api';
 
 interface AuthContextType {
   user: User | null;
   role: UserRole;
-  login: (role: UserRole, userDetails?: Partial<User>) => void;
+  login: (selectedRole: UserRole, userDetails?: Partial<User>) => Promise<void>;
   logout: () => void;
-  updateUser: (details: Partial<User>) => void;
+  updateUser: (details: Partial<User>) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -38,21 +39,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem('roadbuddy_role', role);
   }, [user, role]);
 
-  const login = (selectedRole: UserRole, userDetails?: Partial<User>) => {
+  const login = async (selectedRole: UserRole, userDetails?: Partial<User>) => {
     setRole(selectedRole);
-    let roleName = 'Gautham S.';
-    let roleEmail = 'gautham@roadbuddy.ai';
 
-    if (selectedRole === 'driver') {
-      roleName = 'Rahul Verma (Driver)';
-      roleEmail = 'rahul.driver@roadbuddy.ai';
-    } else if (selectedRole === 'fleet') {
-      roleName = 'Apex Fleet Operations';
-      roleEmail = 'fleet@apexfleet.in';
-    } else if (selectedRole === 'admin') {
-      roleName = 'Admin Ops HQ';
-      roleEmail = 'admin@roadbuddy.ai';
+    let roleEmail = userDetails?.email || 'gautham@roadbuddy.ai';
+    if (!userDetails?.email) {
+      if (selectedRole === 'driver') roleEmail = 'rahul.driver@roadbuddy.ai';
+      else if (selectedRole === 'fleet') roleEmail = 'fleet@apexfleet.in';
+      else if (selectedRole === 'admin') roleEmail = 'admin@roadbuddy.ai';
     }
+
+    try {
+      const response = await authApi.login({ email: roleEmail, role: selectedRole });
+      if (response.access_token) {
+        localStorage.setItem('roadbuddy_token', response.access_token);
+        setUser(response.user);
+        return;
+      }
+    } catch (err) {
+      console.warn('Backend login fallback to local session:', err);
+    }
+
+    // Fallback if backend API unavailable
+    let roleName = 'Gautham S.';
+    if (selectedRole === 'driver') roleName = 'Rahul Verma (Driver)';
+    else if (selectedRole === 'fleet') roleName = 'Apex Fleet Operations';
+    else if (selectedRole === 'admin') roleName = 'Admin Ops HQ';
 
     const newUser: User = {
       ...INITIAL_USER,
@@ -60,7 +72,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       name: roleName,
       email: roleEmail,
       role: selectedRole,
-      ...userDetails
+      ...userDetails,
     };
     setUser(newUser);
   };
@@ -70,11 +82,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setRole('passenger');
     localStorage.removeItem('roadbuddy_user');
     localStorage.removeItem('roadbuddy_role');
+    localStorage.removeItem('roadbuddy_token');
   };
 
-  const updateUser = (details: Partial<User>) => {
+  const updateUser = async (details: Partial<User>) => {
     if (user) {
-      setUser({ ...user, ...details });
+      try {
+        const updated = await authApi.updateProfile(details);
+        setUser(updated);
+      } catch (err) {
+        console.warn('Backend profile update fallback to local state:', err);
+        setUser({ ...user, ...details });
+      }
     }
   };
 

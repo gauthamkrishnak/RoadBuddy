@@ -1,6 +1,15 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { Booking, EmergencyAlert, RoadsideRequest, Vehicle, DriverStats, PaymentTransaction, User } from '../types';
 import { MOCK_BOOKINGS, MOCK_EMERGENCIES, MOCK_ROADSIDE_REQUESTS, MOCK_VEHICLES, MOCK_TRANSACTIONS, MOCK_DRIVERS_LIST, MOCK_USERS_LIST } from '../mockData';
+import {
+  bookingsApi,
+  emergenciesApi,
+  roadsideApi,
+  vehiclesApi,
+  driversApi,
+  usersApi,
+  paymentsApi,
+} from '../services/api';
 
 interface AppContextType {
   bookings: Booking[];
@@ -73,6 +82,59 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     isOnline: true,
   });
 
+  // Polling mechanism to sync state periodically from backend
+  const refreshBackendData = async () => {
+    try {
+      const [
+        fetchedBookings,
+        fetchedEmergencies,
+        fetchedRoadside,
+        fetchedVehicles,
+        fetchedDrivers,
+        fetchedUsers,
+        fetchedTxns,
+      ] = await Promise.allSettled([
+        bookingsApi.getAll(),
+        emergenciesApi.getAll(),
+        roadsideApi.getAll(),
+        vehiclesApi.getAll(),
+        driversApi.getAll(),
+        usersApi.getAll(),
+        paymentsApi.getTransactions(),
+      ]);
+
+      if (fetchedBookings.status === 'fulfilled' && fetchedBookings.value?.length) {
+        setBookings(fetchedBookings.value);
+      }
+      if (fetchedEmergencies.status === 'fulfilled' && fetchedEmergencies.value?.length) {
+        setEmergencies(fetchedEmergencies.value);
+      }
+      if (fetchedRoadside.status === 'fulfilled' && fetchedRoadside.value?.length) {
+        setRoadsideRequests(fetchedRoadside.value);
+      }
+      if (fetchedVehicles.status === 'fulfilled' && fetchedVehicles.value?.length) {
+        setVehicles(fetchedVehicles.value);
+      }
+      if (fetchedDrivers.status === 'fulfilled' && fetchedDrivers.value?.length) {
+        setDrivers(fetchedDrivers.value);
+      }
+      if (fetchedUsers.status === 'fulfilled' && fetchedUsers.value?.length) {
+        setUsersList(fetchedUsers.value);
+      }
+      if (fetchedTxns.status === 'fulfilled' && fetchedTxns.value?.length) {
+        setTransactions(fetchedTxns.value);
+      }
+    } catch (err) {
+      console.warn('Backend polling sync skipped:', err);
+    }
+  };
+
+  useEffect(() => {
+    refreshBackendData();
+    const interval = setInterval(refreshBackendData, 5000); // Poll every 5 seconds
+    return () => clearInterval(interval);
+  }, []);
+
   useEffect(() => {
     localStorage.setItem('roadbuddy_bookings', JSON.stringify(bookings));
   }, [bookings]);
@@ -114,33 +176,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       vehicleNumber: 'KL 01 BT 8890',
       date: dateStr,
       time: timeStr,
-      paymentStatus: 'paid'
+      paymentStatus: 'paid',
     };
 
-    setBookings(prev => [newBooking, ...prev]);
+    setBookings((prev) => [newBooking, ...prev]);
 
-    // Add transaction
-    const newTxn: PaymentTransaction = {
-      id: `TXN-${Math.floor(10000 + Math.random() * 90000)}`,
-      bookingId: newBooking.id,
-      description: `Ride: ${newBooking.pickup} to ${newBooking.destination}`,
-      amount: newBooking.fare,
-      date: dateStr,
-      method: newBooking.paymentMethod,
-      status: 'Successful',
-      type: 'ride'
-    };
-    setTransactions(prev => [newTxn, ...prev]);
+    // Async call to FastAPI backend
+    bookingsApi.create(bookingData).then(() => refreshBackendData()).catch(() => {});
 
     return newBooking;
   };
 
   const cancelBooking = (id: string) => {
-    setBookings(prev => prev.map(b => b.id === id ? { ...b, status: 'cancelled' } : b));
+    setBookings((prev) => prev.map((b) => (b.id === id ? { ...b, status: 'cancelled' } : b)));
+    bookingsApi.cancel(id).then(() => refreshBackendData()).catch(() => {});
   };
 
   const updateBookingStatus = (id: string, status: Booking['status']) => {
-    setBookings(prev => prev.map(b => b.id === id ? { ...b, status } : b));
+    setBookings((prev) => prev.map((b) => (b.id === id ? { ...b, status } : b)));
+    bookingsApi.updateStatus(id, status).then(() => refreshBackendData()).catch(() => {});
   };
 
   const triggerEmergency = (type: EmergencyAlert['type'], location: string): EmergencyAlert => {
@@ -156,18 +210,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       location,
       timestamp: timestampStr,
       status: 'Notified',
-      assignedResponder: `Kerala Emergency Response Unit #${Math.floor(10 + Math.random() * 90)}`
+      assignedResponder: `Kerala Emergency Response Unit #${Math.floor(10 + Math.random() * 90)}`,
     };
 
-    setEmergencies(prev => [newAlert, ...prev]);
+    setEmergencies((prev) => [newAlert, ...prev]);
+    emergenciesApi.trigger(type, location).then(() => refreshBackendData()).catch(() => {});
     return newAlert;
   };
 
   const cancelEmergency = (id: string) => {
-    setEmergencies(prev => prev.map(e => e.id === id ? { ...e, status: 'Cancelled' } : e));
+    setEmergencies((prev) => prev.map((e) => (e.id === id ? { ...e, status: 'Cancelled' } : e)));
+    emergenciesApi.cancel(id).then(() => refreshBackendData()).catch(() => {});
   };
 
-  const createRoadsideRequest = (serviceType: RoadsideRequest['serviceType'], location: string, description: string): RoadsideRequest => {
+  const createRoadsideRequest = (
+    serviceType: RoadsideRequest['serviceType'],
+    location: string,
+    description: string
+  ): RoadsideRequest => {
     const today = new Date();
     const timestampStr = today.toLocaleDateString() + ' ' + today.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
@@ -183,49 +243,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       providerPhone: '+91 98950 44556',
       eta: '12 mins',
       timestamp: timestampStr,
-      cost: 500
+      cost: 500,
     };
 
-    setRoadsideRequests(prev => [newReq, ...prev]);
-
-    // Add transaction
-    const newTxn: PaymentTransaction = {
-      id: `TXN-${Math.floor(10000 + Math.random() * 90000)}`,
-      bookingId: newReq.id,
-      description: `Roadside Assistance: ${serviceType}`,
-      amount: 500,
-      date: today.toISOString().split('T')[0],
-      method: 'UPI',
-      status: 'Successful',
-      type: 'roadside'
-    };
-    setTransactions(prev => [newTxn, ...prev]);
-
+    setRoadsideRequests((prev) => [newReq, ...prev]);
+    roadsideApi.create(serviceType, location, description).then(() => refreshBackendData()).catch(() => {});
     return newReq;
   };
 
   const cancelRoadsideRequest = (id: string) => {
-    setRoadsideRequests(prev => prev.map(r => r.id === id ? { ...r, status: 'cancelled' } : r));
+    setRoadsideRequests((prev) => prev.map((r) => (r.id === id ? { ...r, status: 'cancelled' } : r)));
+    roadsideApi.cancel(id).then(() => refreshBackendData()).catch(() => {});
   };
 
   const toggleDriverOnline = () => {
-    setDriverStats(prev => ({ ...prev, isOnline: !prev.isOnline }));
+    setDriverStats((prev) => ({ ...prev, isOnline: !prev.isOnline }));
+    driversApi.toggleOnline('drv_1').then(() => refreshBackendData()).catch(() => {});
   };
 
   const addVehicle = (vehicleData: Omit<Vehicle, 'id'>) => {
     const newVeh: Vehicle = {
       ...vehicleData,
-      id: `v_${Date.now()}`
+      id: `v_${Date.now()}`,
     };
-    setVehicles(prev => [...prev, newVeh]);
+    setVehicles((prev) => [...prev, newVeh]);
+    vehiclesApi.create(vehicleData).then(() => refreshBackendData()).catch(() => {});
   };
 
   const updateVehicle = (id: string, updated: Partial<Vehicle>) => {
-    setVehicles(prev => prev.map(v => v.id === id ? { ...v, ...updated } : v));
+    setVehicles((prev) => prev.map((v) => (v.id === id ? { ...v, ...updated } : v)));
+    vehiclesApi.update(id, updated).then(() => refreshBackendData()).catch(() => {});
   };
 
   const deleteVehicle = (id: string) => {
-    setVehicles(prev => prev.filter(v => v.id !== id));
+    setVehicles((prev) => prev.filter((v) => v.id !== id));
+    vehiclesApi.delete(id).then(() => refreshBackendData()).catch(() => {});
   };
 
   const addDriver = (driverData: { name: string; phone: string; vehicle: string; status: string }) => {
@@ -236,13 +288,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       vehicle: driverData.vehicle,
       status: driverData.status,
       rating: 5.0,
-      trips: 0
+      trips: 0,
     };
-    setDrivers(prev => [...prev, newDrv]);
+    setDrivers((prev) => [...prev, newDrv]);
+    driversApi.create(driverData).then(() => refreshBackendData()).catch(() => {});
   };
 
   const deleteDriver = (id: string) => {
-    setDrivers(prev => prev.filter(d => d.id !== id));
+    setDrivers((prev) => prev.filter((d) => d.id !== id));
+    driversApi.delete(id).then(() => refreshBackendData()).catch(() => {});
   };
 
   return (
@@ -268,7 +322,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateVehicle,
         deleteVehicle,
         addDriver,
-        deleteDriver
+        deleteDriver,
       }}
     >
       {children}

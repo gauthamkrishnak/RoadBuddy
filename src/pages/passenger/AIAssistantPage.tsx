@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { PageHeader } from '../../components/common/PageHeader';
 import { AIMessage } from '../../types';
 import { Bot, Send, Mic, Sparkles, User, Car, AlertTriangle, Wrench, Navigation, ArrowRight } from 'lucide-react';
+import { aiApi } from '../../services/api';
+
 
 export const AIAssistantPage: React.FC = () => {
   const navigate = useNavigate();
@@ -89,7 +91,7 @@ export const AIAssistantPage: React.FC = () => {
     };
   };
 
-  const handleSendMessage = (textToSend?: string) => {
+  const handleSendMessage = async (textToSend?: string) => {
     const query = textToSend || inputText;
     if (!query.trim()) return;
 
@@ -104,7 +106,17 @@ export const AIAssistantPage: React.FC = () => {
     if (!textToSend) setInputText('');
     setIsTyping(true);
 
-    setTimeout(() => {
+    try {
+      const responseData = await aiApi.chat(query);
+      const aiMsg: AIMessage = {
+        id: `m_ai_${Date.now()}`,
+        sender: 'assistant',
+        text: responseData.text,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        actionButtons: responseData.actionButtons,
+      };
+      setMessages((prev) => [...prev, aiMsg]);
+    } catch (err) {
       const responseData = getAIResponse(query);
       const aiMsg: AIMessage = {
         id: `m_ai_${Date.now()}`,
@@ -114,8 +126,9 @@ export const AIAssistantPage: React.FC = () => {
         actionButtons: responseData.actionButtons,
       };
       setMessages((prev) => [...prev, aiMsg]);
+    } finally {
       setIsTyping(false);
-    }, 900);
+    }
   };
 
   const toggleMic = () => {
