@@ -1,12 +1,12 @@
 {
   "services": {
     "frontend": {
-      "root": "frontend/",
+      "root": ".",
       "framework": "vite"
     },
     "backend": {
       "root": "backend/",
-      "entrypoint": "api/index.py"
+      "entrypoint": "main:app"
     }
   },
   "rewrites": [
